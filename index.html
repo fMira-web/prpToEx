@@ -69,6 +69,10 @@
           <button id="btnAbout" class="hide-mobile focus-ring text-xs px-3 py-2 rounded-xl glass text-slate-300 hover:text-white card-hover">
             About this plan
           </button>
+          <button id="btnAiGrader" class="focus-ring flex items-center gap-1.5 text-xs px-3 py-2 rounded-xl glass text-slate-300 hover:text-white card-hover" title="Configure the third-party AI used to review Speaking exercises">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+            <span class="hide-mobile">AI Grader</span>
+          </button>
           <button id="btnTimer" class="focus-ring flex items-center gap-1.5 text-xs sm:text-sm font-semibold px-3 sm:px-4 py-2 rounded-xl btn-primary shadow-glowEmerald card-hover">
             <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"></circle><path d="M12 9v4l2.5 2.5"></path><path d="M9 2h6"></path></svg>
             <span class="hide-mobile">Timer</span>
@@ -173,6 +177,36 @@
     </div>
   </div>
 
+  <!-- ================= AI GRADER SETTINGS (modal) ================= -->
+  <div id="aiConfigModal" class="hidden fixed inset-0 z-50 modal-backdrop grid place-items-center p-4">
+    <div class="glass-strong rounded-2xl max-w-md w-full p-6 shadow-card fade-in">
+      <div class="flex items-start justify-between gap-4">
+        <h3 class="font-display font-bold text-lg">AI Speaking Grader</h3>
+        <button data-close-aiconfig class="focus-ring text-slate-400 hover:text-white text-xl leading-none">✕</button>
+      </div>
+      <p class="mt-2 text-[12.5px] text-slate-400 leading-relaxed">
+        Speaking exercises can be reviewed by a third-party AI service of your choice — never by this app or by Claude itself. Enter any OpenAI-compatible <code class="text-[11.5px] px-1 py-0.5 rounded bg-black/40 border border-white/10">/chat/completions</code> endpoint, its API key, and a model name.
+      </p>
+      <div class="mt-4 space-y-2.5">
+        <div>
+          <label class="block text-[11px] uppercase tracking-wide text-slate-500 mb-1">API endpoint</label>
+          <input id="aiConfigEndpoint" type="text" placeholder="https://api.example.com/v1/chat/completions" class="focus-ring w-full rounded-lg bg-black/30 border border-white/10 px-3 py-2 text-[12.5px] text-slate-100" />
+        </div>
+        <div>
+          <label class="block text-[11px] uppercase tracking-wide text-slate-500 mb-1">API key</label>
+          <input id="aiConfigKey" type="password" placeholder="sk-…" class="focus-ring w-full rounded-lg bg-black/30 border border-white/10 px-3 py-2 text-[12.5px] text-slate-100" />
+        </div>
+        <div>
+          <label class="block text-[11px] uppercase tracking-wide text-slate-500 mb-1">Model name</label>
+          <input id="aiConfigModel" type="text" placeholder="e.g. gpt-4o-mini" class="focus-ring w-full rounded-lg bg-black/30 border border-white/10 px-3 py-2 text-[12.5px] text-slate-100" />
+        </div>
+      </div>
+      <p class="mt-3 text-[11px] text-slate-500">Stored only in this browser (localStorage) — sent only to the endpoint above, never anywhere else, never to Claude.</p>
+      <div id="aiConfigSavedNote" class="hidden mt-2 text-[11.5px] text-brand-emerald">Saved ✓</div>
+      <button id="btnSaveAiConfigModal" class="focus-ring mt-4 w-full text-sm px-4 py-2.5 rounded-xl btn-primary font-semibold">Save</button>
+    </div>
+  </div>
+
   <!-- ================= POMODORO TIMER MODAL ================= -->
   <div id="timerModal" class="hidden fixed inset-0 z-50 modal-backdrop grid place-items-center p-4">
     <div class="glass-strong rounded-2xl max-w-sm w-full p-6 shadow-card fade-in relative overflow-hidden">
@@ -221,6 +255,11 @@
       </div>
       <p class="mt-4 text-center text-[11px] text-slate-500 relative">Runs while this tab is open · sound plays on completion</p>
     </div>
+  </div>
+
+  <!-- ================= EXERCISE RUNNER (proctored practice, fullscreen) ================= -->
+  <div id="exerciseModal" class="hidden fixed inset-0 z-[60] bg-base-bg overflow-y-auto">
+    <div id="exerciseBody" class="min-h-full max-w-2xl mx-auto px-4 sm:px-6 py-8"></div>
   </div>
 
   <footer class="max-w-[1400px] mx-auto px-4 sm:px-6 py-10 text-center">

@@ -322,12 +322,19 @@
     }).join('');
   }
 
-  function workoutCard(key, label, block, isPrimary) {
+  function workoutCard(key, label, block, isPrimary, dayNum, hasExercise) {
     var ring = isPrimary ? 'border-l-2 ' + (
       key === 'listening' ? 'border-brand-sky' :
       key === 'reading' ? 'border-brand-emerald' :
       key === 'writing' ? 'border-brand-amber' : 'border-brand-rose'
     ) : 'border-l-2 border-white/10';
+    var launchBtn = hasExercise
+      ? '<button type="button" data-launch-exercise="' + key + '" data-launch-day="' + dayNum + '" ' +
+          'class="focus-ring mt-2.5 inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-slate-100">' +
+          '<svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"></path></svg>' +
+          '<span>Start Exercise</span>' +
+        '</button>'
+      : '';
     return (
       '<div class="rounded-xl bg-black/20 px-3.5 py-3 ' + ring + '">' +
         '<div class="flex items-center justify-between gap-2">' +
@@ -338,6 +345,7 @@
         '</div>' +
         '<div class="mt-1 text-[13px] font-semibold text-slate-100">' + esc(block.title) + '</div>' +
         '<div class="mt-0.5 text-[12.5px] text-slate-400 leading-relaxed">' + esc(block.detail) + '</div>' +
+        launchBtn +
       '</div>'
     );
   }
@@ -382,10 +390,10 @@
         '<div>' +
           '<div class="text-[11px] font-semibold uppercase tracking-wide text-slate-400 mb-2">Productive &amp; Receptive Workouts</div>' +
           '<div class="grid sm:grid-cols-2 gap-2.5">' +
-            workoutCard('listening', 'Listening', day.listening, isL) +
-            workoutCard('reading', 'Reading', day.reading, isR) +
-            workoutCard('writing', 'Writing', day.writing, isW) +
-            workoutCard('speaking', 'Speaking', day.speaking, isS) +
+            workoutCard('listening', 'Listening', day.listening, isL, day.n, !!(day.exercise && day.exercise.listening)) +
+            workoutCard('reading', 'Reading', day.reading, isR, day.n, !!(day.exercise && day.exercise.reading)) +
+            workoutCard('writing', 'Writing', day.writing, isW, day.n, !!(day.exercise && day.exercise.writing)) +
+            workoutCard('speaking', 'Speaking', day.speaking, isS, day.n, !!(day.exercise && day.exercise.speaking)) +
           '</div>' +
         '</div>' +
 
@@ -605,6 +613,12 @@
      EVENT DELEGATION
   ========================================================= */
   root.addEventListener('click', function (e) {
+    var launchBtn = e.target.closest('[data-launch-exercise]');
+    if (launchBtn) {
+      openExercise(parseInt(launchBtn.getAttribute('data-launch-day'), 10), launchBtn.getAttribute('data-launch-exercise'));
+      return;
+    }
+
     var monthToggle = e.target.closest('[data-month-toggle]');
     var weekToggle = e.target.closest('[data-week-toggle]');
     var dayToggle = e.target.closest('[data-day-toggle]');
@@ -729,6 +743,37 @@
   aboutModal.addEventListener('click', function (e) { if (e.target === aboutModal) aboutModal.classList.add('hidden'); });
 
   /* =========================================================
+     AI GRADER SETTINGS (global entry point, header button)
+     Configures the third-party AI used to review Speaking exercises.
+     loadAiConfig/saveAiConfig are defined later in this file (Exercise
+     Runner section) but are plain function declarations, so they're
+     hoisted and callable from here.
+  ========================================================= */
+  var aiConfigModal = document.getElementById('aiConfigModal');
+  function openAiConfigModal() {
+    var cfg = loadAiConfig();
+    document.getElementById('aiConfigEndpoint').value = cfg.endpoint || '';
+    document.getElementById('aiConfigKey').value = cfg.apiKey || '';
+    document.getElementById('aiConfigModel').value = cfg.model || '';
+    document.getElementById('aiConfigSavedNote').classList.add('hidden');
+    aiConfigModal.classList.remove('hidden');
+  }
+  document.getElementById('btnAiGrader').addEventListener('click', openAiConfigModal);
+  aiConfigModal.querySelectorAll('[data-close-aiconfig]').forEach(function (b) {
+    b.addEventListener('click', function () { aiConfigModal.classList.add('hidden'); });
+  });
+  aiConfigModal.addEventListener('click', function (e) { if (e.target === aiConfigModal) aiConfigModal.classList.add('hidden'); });
+  document.getElementById('btnSaveAiConfigModal').addEventListener('click', function () {
+    saveAiConfig({
+      endpoint: document.getElementById('aiConfigEndpoint').value.trim(),
+      apiKey: document.getElementById('aiConfigKey').value.trim(),
+      model: document.getElementById('aiConfigModel').value.trim()
+    });
+    document.getElementById('aiConfigSavedNote').classList.remove('hidden');
+    document.dispatchEvent(new CustomEvent('ai-config-saved'));
+  });
+
+  /* =========================================================
      POMODORO TIMER
   ========================================================= */
   var TIMER_MODES = { focus: 25 * 60, short: 5 * 60, long: 15 * 60 };
@@ -843,6 +888,701 @@
   timerModal.addEventListener('click', function (e) { if (e.target === timerModal) timerModal.classList.add('hidden'); });
 
   /* =========================================================
+     EXERCISE RUNNER
+     Real, gradable practice content (Week 1 only, for now) that runs
+     full-screen and locked: leaving full-screen, switching tabs, or
+     switching windows resets the attempt. Listening audio is
+     synthesised in the browser (no external audio files). Speaking
+     review is done by a THIRD-PARTY AI service the user configures
+     themselves (endpoint + API key, stored only in localStorage) —
+     this app never calls Claude, or any AI, on its own.
+  ========================================================= */
+  var exerciseModal = document.getElementById('exerciseModal');
+  var exerciseBody = document.getElementById('exerciseBody');
+  var currentCtx = null;       // {dayNum, skill, exercise}
+  var exerciseActive = false;  // true once the full-screen-locked attempt has begun
+  var graceUntil = 0;          // Date.now() timestamp; ignore exit/blur signals until this passes
+  var mediaStreams = [];       // live getUserMedia streams to tear down on close
+  var activeIntervalId = null; // the Writing exercise's timer/stopwatch
+  var speakingIntervalId = null; // the Speaking exercise's prep/record countdown
+  var speakingCancelled = false; // guards Speaking's async callbacks after the modal closes
+  var aiConfigSavedHandler = null; // active 'ai-config-saved' listener while the Speaking review screen is open
+
+  function grace(ms) { graceUntil = Date.now() + (ms || 900); }
+  function inGrace() { return Date.now() < graceUntil; }
+
+  function isFS() { return !!(document.fullscreenElement || document.webkitFullscreenElement || document.msFullscreenElement); }
+  function requestFS() {
+    var el = exerciseModal;
+    var fn = el.requestFullscreen || el.webkitRequestFullscreen || el.msRequestFullscreen;
+    if (!fn) return Promise.reject(new Error('unsupported'));
+    return fn.call(el);
+  }
+  function exitFSIfAny() {
+    if (!isFS()) return;
+    var fn = document.exitFullscreen || document.webkitExitFullscreen || document.msExitFullscreen;
+    if (fn) { try { fn.call(document); } catch (e) {} }
+  }
+
+  function skillLabel(k) { return { listening: 'Listening', reading: 'Reading', writing: 'Writing', speaking: 'Speaking' }[k] || k; }
+
+  function clearActiveInterval() { if (activeIntervalId) { clearInterval(activeIntervalId); activeIntervalId = null; } }
+  function clearSpeakingInterval() { if (speakingIntervalId) { clearInterval(speakingIntervalId); speakingIntervalId = null; } }
+
+  function stopAllMedia() {
+    speakingCancelled = true;
+    clearActiveInterval();
+    clearSpeakingInterval();
+    mediaStreams.forEach(function (s) { try { s.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {} });
+    mediaStreams = [];
+    try { window.speechSynthesis && window.speechSynthesis.cancel(); } catch (e) {}
+    if (aiConfigSavedHandler) { document.removeEventListener('ai-config-saved', aiConfigSavedHandler); aiConfigSavedHandler = null; }
+  }
+
+  function openExercise(dayNum, skill) {
+    var day = DAY_BY_N[dayNum];
+    var ex = day && day.exercise && day.exercise[skill];
+    if (!ex) return;
+    currentCtx = { dayNum: dayNum, skill: skill, exercise: ex };
+    exerciseModal.classList.remove('hidden');
+    document.body.style.overflow = 'hidden';
+    renderGate();
+  }
+
+  function closeExercise() {
+    exerciseActive = false;
+    stopAllMedia();
+    exitFSIfAny();
+    exerciseModal.classList.add('hidden');
+    document.body.style.overflow = '';
+    currentCtx = null;
+  }
+
+  function renderGate() {
+    var ctx = currentCtx;
+    exerciseBody.innerHTML =
+      '<div class="max-w-lg mx-auto text-center py-16 px-4">' +
+        '<div class="w-14 h-14 mx-auto rounded-2xl bg-gradient-to-br from-brand-amber/20 to-brand-rose/10 border border-brand-amber/30 grid place-items-center text-2xl mb-4">🔒</div>' +
+        '<div class="text-[11px] uppercase tracking-wide text-brand-amber font-semibold mb-2">Proctored Practice</div>' +
+        '<div class="font-display font-bold text-xl mb-3">' + esc(skillLabel(ctx.skill)) + ' Exercise — Day ' + ctx.dayNum + '</div>' +
+        '<p class="text-slate-400 text-[13px] leading-relaxed mb-6">This exercise runs in full-screen so you can practise without distraction. If you exit full-screen, switch tabs, or switch windows before you finish, your attempt will be reset — make sure you have a few uninterrupted minutes.' +
+          (ctx.skill === 'speaking' ? ' You’ll also be asked for microphone access.' : '') + '</p>' +
+        '<button id="btnStartEx" type="button" class="focus-ring px-6 py-3 rounded-xl btn-primary font-semibold text-[13.5px] shadow-glowEmerald">Enter Full-Screen &amp; Start</button>' +
+        '<div class="mt-4"><button data-close-exercise type="button" class="text-[12px] text-slate-500 hover:text-slate-300">Cancel</button></div>' +
+      '</div>';
+    document.getElementById('btnStartEx').addEventListener('click', function () {
+      grace(1000);
+      requestFS().catch(function () {}).then(function () {
+        exerciseActive = true;
+        grace(700);
+        renderExercise();
+      });
+    });
+  }
+
+  function renderCheatScreen() {
+    stopAllMedia();
+    exitFSIfAny();
+    exerciseBody.innerHTML =
+      '<div class="max-w-lg mx-auto text-center py-16 px-4">' +
+        '<div class="w-14 h-14 mx-auto rounded-2xl bg-brand-rose/15 border border-brand-rose/30 grid place-items-center text-2xl mb-4">🚫</div>' +
+        '<div class="font-display font-bold text-xl mb-2 text-brand-rose">Attempt reset</div>' +
+        '<p class="text-slate-400 text-[13px] leading-relaxed mb-6">Looks like you left full-screen, or switched tabs or windows, during the exercise — were you trying to cheat? To keep practice honest, this attempt has been cleared. Stay in full-screen and on this tab until you submit.</p>' +
+        '<button id="btnRetryEx" type="button" class="focus-ring px-5 py-2.5 rounded-xl bg-white/10 hover:bg-white/15 text-slate-100 font-semibold text-[13px]">Try Again</button>' +
+        '<div class="mt-4"><button data-close-exercise type="button" class="text-[12px] text-slate-500 hover:text-slate-300">Close</button></div>' +
+      '</div>';
+    document.getElementById('btnRetryEx').addEventListener('click', renderGate);
+  }
+
+  function onPotentialCheat() {
+    if (!exerciseActive || inGrace()) return;
+    exerciseActive = false;
+    renderCheatScreen();
+  }
+
+  document.addEventListener('fullscreenchange', function () { if (!isFS()) onPotentialCheat(); });
+  document.addEventListener('webkitfullscreenchange', function () { if (!isFS()) onPotentialCheat(); });
+  document.addEventListener('visibilitychange', function () { if (document.hidden) onPotentialCheat(); });
+  window.addEventListener('blur', function () { onPotentialCheat(); });
+
+  exerciseModal.addEventListener('click', function (e) {
+    if (e.target.closest('[data-close-exercise]')) closeExercise();
+  });
+  exerciseBody.addEventListener('click', function (e) {
+    if (e.target.closest('[data-finish-exercise]')) {
+      if (currentCtx) {
+        completed.add(currentCtx.dayNum);
+        saveProgress();
+        pushCompletedToDb();
+        refreshAllCheckboxes();
+        updateProgressUI();
+      }
+      closeExercise();
+    }
+  });
+
+  function exHeaderHTML(ctx) {
+    return (
+      '<div class="flex items-center justify-between py-3.5 border-b border-white/10 mb-5">' +
+        '<div>' +
+          '<div class="text-[10.5px] uppercase tracking-wide text-slate-500">' + esc(skillLabel(ctx.skill)) + ' · Day ' + ctx.dayNum + '</div>' +
+          '<div class="font-display font-bold text-[15px] sm:text-base">' + esc(ctx.exercise.title || ctx.exercise.taskType || (skillLabel(ctx.skill) + ' Practice')) + '</div>' +
+        '</div>' +
+        '<button data-close-exercise type="button" class="focus-ring shrink-0 w-9 h-9 rounded-lg hover:bg-white/10 grid place-items-center text-slate-400 hover:text-white text-lg" title="Exit (resets this attempt)">✕</button>' +
+      '</div>'
+    );
+  }
+  function completionFooterHTML(extraLabel) {
+    return (
+      '<div class="mt-6 rounded-xl bg-brand-emerald/10 border border-brand-emerald/30 px-4 py-3.5 flex items-center justify-between gap-3 flex-wrap">' +
+        '<div class="text-[12.5px] text-slate-200">' + (extraLabel || 'Nice work — you can mark today’s day complete from here.') + '</div>' +
+        '<button data-finish-exercise type="button" class="focus-ring shrink-0 px-4 py-2 rounded-lg btn-primary text-[12.5px] font-semibold">Mark Day ' + (currentCtx ? currentCtx.dayNum : '') + ' Complete &amp; Close</button>' +
+      '</div>'
+    );
+  }
+
+  function renderExercise() {
+    var ctx = currentCtx;
+    if (ctx.skill === 'listening') renderListening(ctx);
+    else if (ctx.skill === 'reading') renderReading(ctx);
+    else if (ctx.skill === 'writing') renderWriting(ctx);
+    else if (ctx.skill === 'speaking') renderSpeaking(ctx);
+  }
+
+  /* ---------- shared question rendering (Listening + Reading) ---------- */
+  function normalizeQuestion(q) {
+    if (q.type === 'tfng') {
+      var opts = ['True', 'False', 'Not Given'];
+      return { id: q.id, type: 'mcq', prompt: q.prompt, options: opts, answerIndex: opts.indexOf(q.answer) };
+    }
+    return q;
+  }
+  function normalizeAnswerText(s) {
+    return String(s || '').toLowerCase().trim().replace(/[.,!?;:'"()]/g, '').replace(/\s+/g, ' ');
+  }
+  function gapIsCorrect(q, given) {
+    var norm = normalizeAnswerText(given);
+    if (!norm) return false;
+    var cands = [q.answer].concat(q.altAnswers || []).map(normalizeAnswerText);
+    return cands.indexOf(norm) !== -1;
+  }
+  function renderQuestionsHTML(questions) {
+    return questions.map(normalizeQuestion).map(function (q) {
+      if (q.type === 'gap') {
+        return (
+          '<div class="mb-3.5">' +
+            '<label class="block text-[12.5px] text-slate-300 mb-1.5">' + esc(q.prompt) + '</label>' +
+            '<input type="text" data-ex-answer="' + q.id + '" autocomplete="off" spellcheck="false" ' +
+              'class="focus-ring w-full rounded-lg bg-black/30 border border-white/10 px-3 py-2 text-[13px] text-slate-100" />' +
+            '<div data-ex-feedback="' + q.id + '" class="mt-1 text-[11.5px]"></div>' +
+          '</div>'
+        );
+      }
+      var opts = q.options.map(function (opt, i) {
+        return (
+          '<label class="flex items-center gap-2 py-1 text-[12.5px] text-slate-300 cursor-pointer">' +
+            '<input type="radio" name="mcq-' + q.id + '" value="' + i + '" data-ex-answer="' + q.id + '" class="accent-emerald-400" />' +
+            '<span>' + esc(opt) + '</span>' +
+          '</label>'
+        );
+      }).join('');
+      return (
+        '<div class="mb-3.5">' +
+          '<div class="text-[12.5px] text-slate-300 mb-1.5">' + esc(q.prompt) + '</div>' +
+          '<div class="flex flex-col gap-0.5">' + opts + '</div>' +
+          '<div data-ex-feedback="' + q.id + '" class="mt-1 text-[11.5px]"></div>' +
+        '</div>'
+      );
+    }).join('');
+  }
+  function gradeQuestions(questions) {
+    var norm = questions.map(normalizeQuestion);
+    var correct = 0;
+    norm.forEach(function (q) {
+      var isCorrect, correctText;
+      if (q.type === 'gap') {
+        var el = exerciseBody.querySelector('[data-ex-answer="' + q.id + '"]');
+        isCorrect = gapIsCorrect(q, el ? el.value : '');
+        correctText = q.answer;
+      } else {
+        var checked = exerciseBody.querySelector('[data-ex-answer="' + q.id + '"]:checked');
+        var given = checked ? parseInt(checked.value, 10) : null;
+        isCorrect = given === q.answerIndex;
+        correctText = q.options[q.answerIndex];
+      }
+      if (isCorrect) correct++;
+      var fb = exerciseBody.querySelector('[data-ex-feedback="' + q.id + '"]');
+      if (fb) {
+        fb.innerHTML = isCorrect
+          ? '<span class="text-brand-emerald">✓ Correct</span>'
+          : '<span class="text-brand-rose">✗ Correct answer: ' + esc(correctText) + '</span>';
+      }
+    });
+    return { correct: correct, total: norm.length };
+  }
+
+  /* ---------- Text-to-speech (Listening audio) ---------- */
+  function primeVoices() {
+    if (!('speechSynthesis' in window)) return;
+    window.speechSynthesis.getVoices();
+    window.speechSynthesis.onvoiceschanged = function () {};
+  }
+  function pickVoice(hint) {
+    if (!('speechSynthesis' in window)) return null;
+    var voices = window.speechSynthesis.getVoices() || [];
+    var exact = voices.filter(function (v) { return v.lang === hint; });
+    if (exact.length) return exact[0];
+    var lang = voices.filter(function (v) { return v.lang && v.lang.indexOf('en') === 0; });
+    return lang.length ? lang[0] : null;
+  }
+  function speakSegments(segments, hint, onDone) {
+    if (!('speechSynthesis' in window)) { onDone && onDone(); return; }
+    window.speechSynthesis.cancel();
+    var i = 0;
+    function next() {
+      if (i >= segments.length) { onDone && onDone(); return; }
+      var seg = segments[i++];
+      var u = new SpeechSynthesisUtterance(seg.text);
+      u.lang = hint || 'en-GB';
+      u.rate = 0.98;
+      var v = pickVoice(u.lang);
+      if (v) u.voice = v;
+      u.onend = next;
+      u.onerror = next;
+      window.speechSynthesis.speak(u);
+    }
+    next();
+  }
+
+  /* ---------- Listening ---------- */
+  function renderListening(ctx) {
+    var ex = ctx.exercise;
+    exerciseBody.innerHTML =
+      exHeaderHTML(ctx) +
+      '<p class="text-[13px] text-slate-300 leading-relaxed mb-4">' + esc(ex.instructions) + '</p>' +
+      '<div class="rounded-xl bg-black/25 border border-white/10 px-4 py-3.5 mb-5 flex items-center gap-3">' +
+        '<button id="btnPlayAudio" type="button" class="focus-ring shrink-0 w-11 h-11 rounded-full btn-primary grid place-items-center shadow-glowEmerald">' +
+          '<svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"></path></svg>' +
+        '</button>' +
+        '<div class="text-[12.5px] text-slate-400" id="audioStatus">Press play to hear the recording. The voice is synthesised in your browser.</div>' +
+      '</div>' +
+      (ex.predictionMode ? '<div class="text-[11.5px] text-brand-amber/90 mb-3">Fill in your predicted answers first, then press play — predictions aren’t graded, only your final answers after listening are.</div>' : '') +
+      (ex.formTitle ? '<div class="font-display font-semibold text-[13.5px] mb-2.5">' + esc(ex.formTitle) + '</div>' : '') +
+      '<div>' + renderQuestionsHTML(ex.questions) + '</div>' +
+      '<button id="btnGradeListening" type="button" class="focus-ring mt-2 px-5 py-2.5 rounded-xl btn-primary font-semibold text-[13px]">Submit Answers</button>' +
+      '<div id="listeningResult" class="mt-4"></div>';
+
+    document.getElementById('btnPlayAudio').addEventListener('click', function (e) {
+      var btn = e.currentTarget;
+      btn.disabled = true;
+      document.getElementById('audioStatus').textContent = 'Playing…';
+      speakSegments(ex.segments, ex.voiceHint, function () {
+        btn.disabled = false;
+        document.getElementById('audioStatus').textContent = 'Finished. Press play again to replay.';
+      });
+    });
+    document.getElementById('btnGradeListening').addEventListener('click', function () {
+      var res = gradeQuestions(ex.questions);
+      document.getElementById('listeningResult').innerHTML =
+        '<div class="rounded-xl bg-black/25 border border-white/10 px-4 py-3.5 mb-3">' +
+          '<span class="font-display font-bold text-lg">' + res.correct + '/' + res.total + '</span> <span class="text-slate-400 text-[12.5px]">correct</span>' +
+        '</div>' + completionFooterHTML();
+    });
+  }
+
+  /* ---------- Reading ---------- */
+  function renderReading(ctx) {
+    var ex = ctx.exercise;
+    var passageHTML = ex.passage.map(function (p) {
+      return '<p class="text-[13px] text-slate-300 leading-relaxed mb-3 whitespace-pre-line">' + esc(p) + '</p>';
+    }).join('');
+
+    if (ex.questions && ex.questions.length) {
+      exerciseBody.innerHTML =
+        exHeaderHTML(ctx) +
+        (ex.instructions ? '<p class="text-[12.5px] text-brand-amber/90 mb-3">' + esc(ex.instructions) + '</p>' : '') +
+        '<div class="font-display font-semibold text-[14px] mb-2">' + esc(ex.title) + '</div>' +
+        '<div class="rounded-xl bg-black/20 border border-white/10 px-4 py-3.5 mb-5">' + passageHTML + '</div>' +
+        '<div>' + renderQuestionsHTML(ex.questions) + '</div>' +
+        '<button id="btnGradeReading" type="button" class="focus-ring mt-2 px-5 py-2.5 rounded-xl btn-primary font-semibold text-[13px]">Submit Answers</button>' +
+        '<div id="readingResult" class="mt-4"></div>';
+      document.getElementById('btnGradeReading').addEventListener('click', function () {
+        var res = gradeQuestions(ex.questions);
+        document.getElementById('readingResult').innerHTML =
+          '<div class="rounded-xl bg-black/25 border border-white/10 px-4 py-3.5 mb-3">' +
+            '<span class="font-display font-bold text-lg">' + res.correct + '/' + res.total + '</span> <span class="text-slate-400 text-[12.5px]">correct</span>' +
+          '</div>' + completionFooterHTML();
+      });
+      return;
+    }
+
+    // Skim + self-summary mode (no auto-graded questions — e.g. Day 4)
+    var paras = ex.passage.map(function (p, i) {
+      var summary = (ex.modelSummaries && ex.modelSummaries[i]) || '';
+      return (
+        '<div class="rounded-xl bg-black/20 border border-white/10 px-4 py-3.5 mb-3.5">' +
+          '<div class="text-[10.5px] uppercase tracking-wide text-slate-500 mb-1.5">Paragraph ' + (i + 1) + '</div>' +
+          '<p class="text-[13px] text-slate-300 leading-relaxed mb-3">' + esc(p) + '</p>' +
+          '<label class="block text-[11.5px] text-slate-400 mb-1">Your one-sentence summary:</label>' +
+          '<input type="text" class="focus-ring w-full rounded-lg bg-black/30 border border-white/10 px-3 py-2 text-[13px] text-slate-100 mb-2" />' +
+          (summary ? '<button data-reveal-summary="' + i + '" type="button" class="text-[11.5px] text-brand-sky hover:underline">Show model summary</button>' +
+            '<div data-summary-model="' + i + '" class="hidden mt-1.5 text-[12px] text-slate-400 italic">' + esc(summary) + '</div>' : '') +
+        '</div>'
+      );
+    }).join('');
+    exerciseBody.innerHTML =
+      exHeaderHTML(ctx) +
+      '<p class="text-[12.5px] text-brand-amber/90 mb-4">' + esc(ex.instructions) + '</p>' +
+      paras +
+      completionFooterHTML('When you’ve summarised every paragraph, mark the day complete.');
+    exerciseBody.querySelectorAll('[data-reveal-summary]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var i = btn.getAttribute('data-reveal-summary');
+        exerciseBody.querySelector('[data-summary-model="' + i + '"]').classList.remove('hidden');
+      });
+    });
+  }
+
+  /* ---------- Writing ---------- */
+  function renderChartHTML(chart) {
+    if (!chart) return '';
+    if (chart.type === 'pie') {
+      var total = chart.data.reduce(function (s, d) { return s + d.value; }, 0);
+      var acc = 0;
+      var stops = chart.data.map(function (d) {
+        var start = (acc / total) * 360; acc += d.value;
+        var end = (acc / total) * 360;
+        return d.color + ' ' + start.toFixed(1) + 'deg ' + end.toFixed(1) + 'deg';
+      }).join(', ');
+      var legend = chart.data.map(function (d) {
+        return '<div class="flex items-center gap-1.5 text-[11.5px] text-slate-400"><span class="w-2.5 h-2.5 rounded-sm shrink-0" style="background:' + d.color + '"></span>' + esc(d.label) + ' — ' + d.value + '%</div>';
+      }).join('');
+      return (
+        '<div class="flex flex-col sm:flex-row items-center gap-5 mb-5 rounded-xl bg-black/20 border border-white/10 px-4 py-4">' +
+          '<div class="w-32 h-32 rounded-full shrink-0" style="background: conic-gradient(' + stops + ')"></div>' +
+          '<div class="flex flex-col gap-1">' + legend + '</div>' +
+        '</div>'
+      );
+    }
+    if (chart.type === 'bar') {
+      var max = Math.max.apply(null, chart.data.map(function (d) { return d.value; }));
+      var bars = chart.data.map(function (d) {
+        var h = Math.round((d.value / max) * 100);
+        return (
+          '<div class="flex flex-col items-center gap-1.5 flex-1">' +
+            '<div class="text-[11px] text-slate-300 num-pill">' + d.value + '%</div>' +
+            '<div class="w-full ex-bar-track rounded-t-md flex items-end" style="height:120px">' +
+              '<div class="w-full ex-bar-fill rounded-t-md" style="height:' + h + '%;background:' + d.color + '"></div>' +
+            '</div>' +
+            '<div class="text-[10.5px] text-slate-500 text-center">' + esc(d.label) + '</div>' +
+          '</div>'
+        );
+      }).join('');
+      return '<div class="flex items-end gap-3 mb-5 rounded-xl bg-black/20 border border-white/10 px-4 py-4">' + bars + '</div>';
+    }
+    return '';
+  }
+  function fmtMMSS(sec) {
+    sec = Math.max(0, sec);
+    var m = Math.floor(sec / 60), s = Math.floor(sec % 60);
+    return (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s;
+  }
+  function startCountdown(el, totalSeconds) {
+    clearActiveInterval();
+    var remaining = totalSeconds;
+    el.textContent = fmtMMSS(remaining) + ' remaining';
+    activeIntervalId = setInterval(function () {
+      remaining--;
+      el.textContent = remaining >= 0 ? fmtMMSS(remaining) + ' remaining' : 'Time’s up';
+      if (remaining <= 0) clearActiveInterval();
+    }, 1000);
+  }
+  function startStopwatch(el) {
+    clearActiveInterval();
+    var elapsed = 0;
+    el.textContent = '00:00 elapsed (untimed)';
+    activeIntervalId = setInterval(function () {
+      elapsed++;
+      el.textContent = fmtMMSS(elapsed) + ' elapsed (untimed)';
+    }, 1000);
+  }
+
+  function renderWriting(ctx) {
+    var ex = ctx.exercise;
+    var promptsHTML;
+    if (ex.extraPrompts) {
+      promptsHTML = ex.extraPrompts.map(function (p, i) {
+        return (
+          '<div class="mb-5">' +
+            '<div class="text-[12.5px] text-slate-300 leading-relaxed mb-2 rounded-lg bg-black/20 border border-white/10 px-3.5 py-3">' + esc(p) + '</div>' +
+            '<textarea data-writing-input="' + i + '" rows="3" class="focus-ring w-full rounded-lg bg-black/30 border border-white/10 px-3 py-2.5 text-[13px] text-slate-100 leading-relaxed" placeholder="Your overview paragraph…"></textarea>' +
+          '</div>'
+        );
+      }).join('');
+    } else {
+      promptsHTML =
+        renderChartHTML(ex.chart) +
+        '<textarea id="writingMain" rows="12" class="focus-ring w-full rounded-lg bg-black/30 border border-white/10 px-3.5 py-3 text-[13.5px] text-slate-100 leading-relaxed" placeholder="Write your response here…"></textarea>' +
+        '<div class="mt-1.5 text-[11.5px]" id="wordCount">0 words' + (ex.minWords ? ' / ' + ex.minWords + ' min' : '') + '</div>';
+    }
+
+    var checklistHTML = ex.checklist.map(function (c) {
+      return (
+        '<label class="flex items-start gap-2 py-1 text-[12px] text-slate-300 cursor-pointer">' +
+          '<input type="checkbox" class="mt-0.5 accent-emerald-400" />' +
+          '<span>' + esc(c) + '</span>' +
+        '</label>'
+      );
+    }).join('');
+
+    exerciseBody.innerHTML =
+      exHeaderHTML(ctx) +
+      '<div class="text-[10.5px] uppercase tracking-wide text-brand-amber font-semibold mb-1.5">' + esc(ex.taskType) + '</div>' +
+      '<p class="text-[13px] text-slate-300 leading-relaxed mb-1">' + esc(ex.prompt) + '</p>' +
+      '<div class="text-right text-[11.5px] text-slate-500 num-pill mb-4" id="writingTimer"></div>' +
+      promptsHTML +
+      '<div class="mt-5">' +
+        '<div class="text-[11px] font-semibold uppercase tracking-wide text-slate-400 mb-1.5">Self-Assessment Checklist</div>' +
+        checklistHTML +
+      '</div>' +
+      '<div class="mt-4"><button id="btnRevealModel" type="button" class="focus-ring text-[12px] text-brand-sky hover:underline">Reveal model answer</button></div>' +
+      '<div id="modelAnswerBox" class="hidden mt-3 rounded-xl bg-black/20 border border-white/10 px-4 py-3.5 text-[12.5px] text-slate-400 leading-relaxed whitespace-pre-line"></div>' +
+      completionFooterHTML();
+
+    document.getElementById('btnRevealModel').addEventListener('click', function () {
+      var box = document.getElementById('modelAnswerBox');
+      box.textContent = ex.modelAnswer;
+      box.classList.remove('hidden');
+    });
+
+    if (!ex.extraPrompts) {
+      var textarea = document.getElementById('writingMain');
+      var wc = document.getElementById('wordCount');
+      textarea.addEventListener('input', function () {
+        var n = textarea.value.trim() ? textarea.value.trim().split(/\s+/).length : 0;
+        wc.textContent = n + ' words' + (ex.minWords ? ' / ' + ex.minWords + ' min' : '');
+        wc.className = ex.minWords && n < ex.minWords ? 'text-brand-amber' : 'text-brand-emerald';
+      });
+    }
+
+    var timerEl = document.getElementById('writingTimer');
+    if (ex.timeLimitMinutes) startCountdown(timerEl, ex.timeLimitMinutes * 60);
+    else startStopwatch(timerEl);
+  }
+
+  /* ---------- Speaking ---------- */
+  var AI_CONFIG_KEY = 'ielts-roadmap-ai-grader-v1';
+  function loadAiConfig() {
+    try { return JSON.parse(localStorage.getItem(AI_CONFIG_KEY) || 'null') || {}; } catch (e) { return {}; }
+  }
+  function saveAiConfig(cfg) {
+    try { localStorage.setItem(AI_CONFIG_KEY, JSON.stringify(cfg)); } catch (e) {}
+  }
+
+  function renderSpeaking(ctx) {
+    var ex = ctx.exercise;
+    var idx = 0;
+    var records = [];
+    speakingCancelled = false;
+
+    function renderItem() {
+      var item = ex.items[idx];
+      exerciseBody.innerHTML =
+        exHeaderHTML(ctx) +
+        '<p class="text-[12.5px] text-slate-400 mb-4">' + esc(ex.instructions) + '</p>' +
+        '<div class="text-[11px] text-slate-500 mb-1.5">Question ' + (idx + 1) + ' of ' + ex.items.length + '</div>' +
+        '<div class="rounded-xl bg-black/20 border border-white/10 px-4 py-4 mb-5">' +
+          '<div class="font-display font-semibold text-[15px] text-slate-100">' + esc(item.prompt) + '</div>' +
+        '</div>' +
+        '<div id="speakStage" class="rounded-xl bg-black/25 border border-white/10 px-4 py-6 text-center">' +
+          '<button id="btnBeginItem" type="button" class="focus-ring px-5 py-2.5 rounded-xl btn-primary font-semibold text-[13px]">Get Ready (' + item.prepSeconds + 's) &amp; Record</button>' +
+        '</div>' +
+        '<div id="itemResult" class="mt-4"></div>';
+      document.getElementById('btnBeginItem').addEventListener('click', function () { beginPrep(item); });
+    }
+
+    function beginPrep(item) {
+      var stage = document.getElementById('speakStage');
+      var remaining = item.prepSeconds;
+      stage.innerHTML = '<div class="text-[12px] text-slate-400 mb-2">Get ready…</div><div class="font-display font-extrabold text-3xl num-pill">' + remaining + '</div>';
+      clearSpeakingInterval();
+      speakingIntervalId = setInterval(function () {
+        if (speakingCancelled) { clearSpeakingInterval(); return; }
+        remaining--;
+        if (remaining <= 0) { clearSpeakingInterval(); beginRecording(item); return; }
+        var d = stage.querySelector('.font-display'); if (d) d.textContent = remaining;
+      }, 1000);
+    }
+
+    function beginRecording(item) {
+      var stage = document.getElementById('speakStage');
+      grace(1500); // the mic-permission prompt can blur the window
+      navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
+        if (speakingCancelled) { try { stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {} return; }
+        mediaStreams.push(stream);
+        var chunks = [];
+        var mr = null;
+        try { mr = new MediaRecorder(stream); } catch (e) { mr = null; }
+        var transcriptParts = [];
+        var recognition = null;
+        var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (SR) {
+          recognition = new SR();
+          recognition.lang = 'en-US';
+          recognition.continuous = true;
+          recognition.interimResults = false;
+          recognition.onresult = function (e) {
+            for (var i = e.resultIndex; i < e.results.length; i++) {
+              if (e.results[i].isFinal) transcriptParts.push(e.results[i][0].transcript);
+            }
+          };
+          try { recognition.start(); } catch (e) {}
+        }
+        var remaining = item.speakSeconds;
+        stage.innerHTML =
+          '<div class="flex items-center justify-center gap-2 mb-2 text-brand-rose"><span class="w-2.5 h-2.5 rounded-full bg-brand-rose rec-pulse"></span><span class="text-[12px] font-semibold">Recording</span></div>' +
+          '<div class="font-display font-extrabold text-3xl num-pill">' + remaining + '</div>' +
+          '<button id="btnStopEarly" type="button" class="focus-ring mt-3 text-[11.5px] text-slate-400 hover:text-slate-200 underline">Stop early</button>';
+
+        if (mr) { mr.ondataavailable = function (e) { if (e.data.size) chunks.push(e.data); }; mr.start(); }
+
+        function finish() {
+          if (speakingCancelled) return;
+          clearSpeakingInterval();
+          if (mr && mr.state !== 'inactive') mr.stop();
+          if (recognition) { try { recognition.stop(); } catch (e) {} }
+          try { stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
+          if (mr) {
+            setTimeout(function () {
+              if (speakingCancelled) return;
+              try {
+                var blob = new Blob(chunks, { type: 'audio/webm' });
+                var blobUrl = URL.createObjectURL(blob);
+                records[idx] = { blobUrl: blobUrl, transcript: transcriptParts.join(' ') };
+                showItemDone(blobUrl, transcriptParts.join(' '));
+              } catch (e) { showItemDone(null, transcriptParts.join(' ')); }
+            }, 250);
+          } else {
+            records[idx] = { blobUrl: null, transcript: transcriptParts.join(' ') };
+            showItemDone(null, transcriptParts.join(' '));
+          }
+        }
+
+        clearSpeakingInterval();
+        speakingIntervalId = setInterval(function () {
+          if (speakingCancelled) { clearSpeakingInterval(); return; }
+          remaining--;
+          var d = document.querySelector('#speakStage .font-display');
+          if (d) d.textContent = Math.max(0, remaining);
+          if (remaining <= 0) finish();
+        }, 1000);
+
+        document.getElementById('btnStopEarly').addEventListener('click', finish);
+      }).catch(function () {
+        if (speakingCancelled) return;
+        stage.innerHTML = '<div class="text-[12.5px] text-brand-rose">Microphone access was denied or unavailable — you can still continue, but this response won’t be recorded.</div>' +
+          '<button id="btnSkipItem" type="button" class="focus-ring mt-3 px-4 py-2 rounded-lg bg-white/10 text-[12.5px]">Continue</button>';
+        document.getElementById('btnSkipItem').addEventListener('click', function () { showItemDone(null, ''); });
+      });
+    }
+
+    function showItemDone(blobUrl, transcript) {
+      var isLast = idx === ex.items.length - 1;
+      var playerHTML = blobUrl ? '<audio controls src="' + blobUrl + '" class="w-full mt-3"></audio>' : '';
+      var transcriptHTML = transcript
+        ? '<div class="mt-3 text-[12px] text-slate-400"><span class="text-slate-500">Auto transcript:</span> <span class="italic">' + esc(transcript) + '</span></div>'
+        : '<div class="mt-3 text-[11.5px] text-slate-500">No automatic transcript available in this browser.</div>';
+      document.getElementById('itemResult').innerHTML =
+        '<div class="rounded-xl bg-black/20 border border-white/10 px-4 py-3.5">' +
+          '<div class="text-brand-emerald text-[12.5px] font-semibold mb-1">Recorded ✓</div>' +
+          playerHTML + transcriptHTML +
+        '</div>' +
+        '<button id="btnNextItem" type="button" class="focus-ring mt-3 px-5 py-2.5 rounded-xl btn-primary font-semibold text-[13px]">' +
+          (isLast ? 'Continue' : 'Next Question') + '</button>';
+      document.getElementById('btnNextItem').addEventListener('click', function () {
+        if (isLast) renderReview(); else { idx++; renderItem(); }
+      });
+    }
+
+    function renderReview() {
+      var reflectionHTML = ex.reflectionPrompt
+        ? '<label class="block text-[12px] text-slate-400 mb-1.5 mt-4">' + esc(ex.reflectionPrompt) + '</label>' +
+          '<textarea rows="3" class="focus-ring w-full rounded-lg bg-black/30 border border-white/10 px-3 py-2 text-[13px] text-slate-100"></textarea>'
+        : '';
+      var cfg = loadAiConfig();
+      var configured = !!(cfg.endpoint && cfg.apiKey);
+      exerciseBody.innerHTML =
+        exHeaderHTML(ctx) +
+        '<div class="text-[13px] text-slate-300 mb-2">All ' + ex.items.length + ' response(s) recorded.</div>' +
+        reflectionHTML +
+        '<div class="mt-5 rounded-xl bg-gradient-to-br from-brand-indigo/10 to-transparent border border-brand-indigo/25 px-4 py-4">' +
+          '<div class="flex items-center justify-between gap-2 mb-2">' +
+            '<div class="text-[11px] font-semibold uppercase tracking-wide text-brand-indigo">AI Speaking Review</div>' +
+            '<button id="btnAiSettings" type="button" class="text-[11px] text-slate-400 hover:text-slate-200 underline">' + (configured ? 'Change AI settings' : 'Set up AI grader') + '</button>' +
+          '</div>' +
+          (configured
+            ? '<button id="btnGetAiFeedback" type="button" class="focus-ring px-4 py-2.5 rounded-lg btn-primary font-semibold text-[12.5px]">Get AI Feedback</button>'
+            : '<div class="text-[12px] text-slate-500">Not configured yet. This uses a third-party AI service of your choice (NOT Claude) — click “Set up AI grader” and enter its API endpoint, key and model.</div>') +
+          '<div id="aiFeedbackBox" class="mt-3"></div>' +
+        '</div>' +
+        completionFooterHTML();
+
+      document.getElementById('btnAiSettings').addEventListener('click', openAiConfigModal);
+      if (aiConfigSavedHandler) document.removeEventListener('ai-config-saved', aiConfigSavedHandler);
+      aiConfigSavedHandler = function () { renderReview(); };
+      document.addEventListener('ai-config-saved', aiConfigSavedHandler);
+
+      var btnGet = document.getElementById('btnGetAiFeedback');
+      if (btnGet) {
+        btnGet.addEventListener('click', function () {
+          btnGet.disabled = true;
+          btnGet.textContent = 'Requesting feedback…';
+          var box = document.getElementById('aiFeedbackBox');
+          box.innerHTML = '';
+          requestAiFeedback(ex, records).then(function (text) {
+            box.innerHTML = '<div class="rounded-xl bg-black/25 border border-white/10 px-4 py-3.5 text-[12.5px] text-slate-200 leading-relaxed whitespace-pre-line">' + esc(text) + '</div>';
+          }).catch(function (err) {
+            box.innerHTML = '<div class="text-[12px] text-brand-rose">Could not get feedback: ' + esc(err && err.message ? err.message : String(err)) + '</div>';
+          }).then(function () {
+            btnGet.disabled = false;
+            btnGet.textContent = 'Get AI Feedback';
+          });
+        });
+      }
+    }
+
+    renderItem();
+  }
+
+  function requestAiFeedback(ex, records) {
+    var cfg = loadAiConfig();
+    var transcripts = ex.items.map(function (item, i) {
+      var r = records[i] || {};
+      return 'Q' + (i + 1) + ': "' + item.prompt + '"\nAnswer transcript: ' + (r.transcript || '(no transcript captured — audio only)');
+    }).join('\n\n');
+    var systemPrompt = 'You are an IELTS Speaking examiner. Score the candidate’s answers using the four official IELTS Speaking band criteria (Fluency & Coherence, Lexical Resource, Grammatical Range & Accuracy, Pronunciation — the last only if evidence allows). Give an estimated overall band (1-9, may use .5), one line per criterion with a short justification, and 2-3 concrete improvement tips. Be concise.';
+    var body = {
+      model: cfg.model || 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: 'IELTS Speaking Part ' + ex.part + ' practice.\n\n' + transcripts }
+      ]
+    };
+    return fetch(cfg.endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + cfg.apiKey },
+      body: JSON.stringify(body)
+    }).then(function (r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    }).then(function (data) {
+      var text = data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
+      if (!text) throw new Error('Unexpected response shape from the AI endpoint');
+      return text;
+    });
+  }
+
+  /* =========================================================
      INIT
   ========================================================= */
   function init() {
@@ -852,6 +1592,7 @@
     applyExpandState();
     updateProgressUI();
     updateTimerUI();
+    primeVoices();
     setSyncStatus('connecting');
     initDbSync();
   }
