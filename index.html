@@ -1,0 +1,235 @@
+<title>IELTS 6-Month Roadmap</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        fontFamily: {
+          sans: ['Inter', 'ui-sans-serif', 'system-ui'],
+          display: ['"Plus Jakarta Sans"', 'ui-sans-serif', 'system-ui'],
+        },
+        colors: {
+          base: {
+            bg: '#0B0F19',
+            panel: '#10151f',
+            card: '#131a27',
+            line: '#232b3d',
+          },
+          brand: {
+            emerald: '#34d399',
+            indigo: '#818cf8',
+            amber: '#fbbf24',
+            rose: '#fb7185',
+            sky: '#38bdf8',
+          },
+        },
+        boxShadow: {
+          glow: '0 0 0 1px rgba(129,140,248,0.25), 0 8px 30px -8px rgba(129,140,248,0.35)',
+          glowEmerald: '0 0 0 1px rgba(52,211,153,0.3), 0 8px 30px -8px rgba(52,211,153,0.4)',
+          card: '0 1px 0 0 rgba(255,255,255,0.03) inset, 0 20px 40px -24px rgba(0,0,0,0.6)',
+        },
+        keyframes: {
+          floatSlow: { '0%,100%': { transform: 'translateY(0)' }, '50%': { transform: 'translateY(-10px)' } },
+          pulseGlow: { '0%,100%': { opacity: 0.55 }, '50%': { opacity: 1 } },
+          shimmer: { '0%': { backgroundPosition: '-200% 0' }, '100%': { backgroundPosition: '200% 0' } },
+        },
+        animation: {
+          floatSlow: 'floatSlow 6s ease-in-out infinite',
+          pulseGlow: 'pulseGlow 2.4s ease-in-out infinite',
+          shimmer: 'shimmer 3.2s linear infinite',
+        },
+      },
+    },
+  };
+</script>
+<link rel="stylesheet" href="styles.css">
+<body class="font-sans antialiased">
+
+  <!-- ================= HEADER ================= -->
+  <header class="sticky top-0 z-40 glass-strong border-b border-white/5">
+    <div class="max-w-[1400px] mx-auto px-4 sm:px-6 py-3.5 flex flex-col gap-3">
+      <div class="flex items-center justify-between gap-3">
+        <div class="flex items-center gap-3 min-w-0">
+          <div class="relative shrink-0 w-10 h-10 rounded-2xl bg-gradient-to-br from-brand-emerald via-brand-sky to-brand-indigo grid place-items-center shadow-glow animate-floatSlow">
+            <span class="text-lg">🎓</span>
+          </div>
+          <div class="min-w-0">
+            <h1 class="font-display font-extrabold text-[15px] sm:text-lg leading-tight tracking-tight truncate">
+              IELTS 6-Month Roadmap <span class="grad-text">B2 → C1</span>
+            </h1>
+            <p class="text-[11px] sm:text-xs text-slate-400 truncate">180 daily sessions · 26 weeks · Target Band 7.5+</p>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-2 shrink-0">
+          <button id="btnAbout" class="hide-mobile focus-ring text-xs px-3 py-2 rounded-xl glass text-slate-300 hover:text-white card-hover">
+            About this plan
+          </button>
+          <button id="btnTimer" class="focus-ring flex items-center gap-1.5 text-xs sm:text-sm font-semibold px-3 sm:px-4 py-2 rounded-xl btn-primary shadow-glowEmerald card-hover">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"></circle><path d="M12 9v4l2.5 2.5"></path><path d="M9 2h6"></path></svg>
+            <span class="hide-mobile">Timer</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- stats row -->
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
+        <div class="glass rounded-xl px-3 py-2.5">
+          <div class="flex items-center justify-between">
+            <span class="text-[10.5px] uppercase tracking-wide text-slate-400">Overall Progress</span>
+            <span id="statPercent" class="text-xs font-bold text-brand-emerald num-pill">0%</span>
+          </div>
+          <div class="mt-1.5 h-2 rounded-full progress-track overflow-hidden">
+            <div id="progressBar" class="h-full progress-fill rounded-full" style="width:0%"></div>
+          </div>
+          <div class="mt-1 text-[10.5px] text-slate-500"><span id="statDone">0</span>/180 days complete</div>
+          <div class="mt-1.5 flex items-center gap-1.5">
+            <span id="syncDot" class="w-1.5 h-1.5 rounded-full bg-slate-500"></span>
+            <span id="syncLabel" class="text-[10px] text-slate-500">Connecting…</span>
+          </div>
+        </div>
+        <div class="glass rounded-xl px-3 py-2.5">
+          <div class="text-[10.5px] uppercase tracking-wide text-slate-400">Current Streak</div>
+          <div class="mt-1 flex items-baseline gap-1">
+            <span id="statStreak" class="text-xl font-display font-extrabold num-pill">0</span>
+            <span class="text-[11px] text-slate-500">days</span>
+          </div>
+        </div>
+        <div class="glass rounded-xl px-3 py-2.5">
+          <div class="text-[10.5px] uppercase tracking-wide text-slate-400">Est. Time Invested</div>
+          <div class="mt-1 flex items-baseline gap-1">
+            <span id="statHours" class="text-xl font-display font-extrabold num-pill">0</span>
+            <span class="text-[11px] text-slate-500">hrs logged</span>
+          </div>
+        </div>
+        <div class="glass rounded-xl px-3 py-2.5">
+          <div class="text-[10.5px] uppercase tracking-wide text-slate-400">Pomodoros Today</div>
+          <div class="mt-1 flex items-baseline gap-1">
+            <span id="statPomo" class="text-xl font-display font-extrabold num-pill">0</span>
+            <span class="text-[11px] text-slate-500">🍅 sessions</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- ================= TOOLBAR: SEARCH + FILTER ================= -->
+  <div class="max-w-[1400px] mx-auto px-4 sm:px-6 mt-5">
+    <div class="glass rounded-2xl p-3 sm:p-4 flex flex-col gap-3">
+      <div class="flex flex-col sm:flex-row gap-3">
+        <div class="relative flex-1">
+          <svg class="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg>
+          <input id="searchInput" type="text" aria-label="Search the roadmap" placeholder="Search topics, grammar points, vocabulary, or action items…"
+            class="focus-ring w-full bg-base-card/70 border border-white/10 rounded-xl pl-10 pr-9 py-2.5 text-sm placeholder:text-slate-500 focus:border-brand-indigo/60 transition-colors" />
+          <button id="btnClearSearch" class="hidden absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white text-xs w-5 h-5 grid place-items-center rounded-full hover:bg-white/10">✕</button>
+        </div>
+        <div class="flex items-center gap-2">
+          <button id="btnExpandAll" class="focus-ring text-xs px-3 py-2.5 rounded-xl glass text-slate-300 hover:text-white whitespace-nowrap card-hover">Expand all</button>
+          <button id="btnCollapseAll" class="focus-ring text-xs px-3 py-2.5 rounded-xl glass text-slate-300 hover:text-white whitespace-nowrap card-hover">Collapse all</button>
+          <button id="btnReset" class="focus-ring text-xs px-3 py-2.5 rounded-xl glass text-rose-300 hover:text-rose-200 hover:border-rose-400/40 whitespace-nowrap card-hover">Reset progress</button>
+        </div>
+      </div>
+      <div class="flex flex-wrap items-center gap-2" id="filterChips">
+        <span class="text-[11px] text-slate-500 mr-1">Filter by focus:</span>
+        <!-- chips injected by JS -->
+      </div>
+      <div id="filterStatus" class="hidden text-[11.5px] text-brand-sky"></div>
+    </div>
+  </div>
+
+  <!-- ================= MONTH PHASE STRIP ================= -->
+  <div class="max-w-[1400px] mx-auto px-4 sm:px-6 mt-5">
+    <div id="monthStrip" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5"></div>
+  </div>
+
+  <!-- ================= MAIN ROADMAP ================= -->
+  <main class="max-w-[1400px] mx-auto px-4 sm:px-6 py-6">
+    <div id="roadmapRoot" class="flex flex-col gap-4"></div>
+    <div id="noResults" class="hidden text-center py-16">
+      <div class="text-3xl mb-2">🔍</div>
+      <p class="text-slate-400 text-sm">No days match your current search and filters.</p>
+      <button id="btnClearAll" class="focus-ring mt-3 text-xs px-4 py-2 rounded-xl btn-primary font-semibold">Clear filters</button>
+    </div>
+  </main>
+
+  <!-- ================= ABOUT PANEL (modal) ================= -->
+  <div id="aboutModal" class="hidden fixed inset-0 z-50 modal-backdrop grid place-items-center p-4">
+    <div class="glass-strong rounded-2xl max-w-lg w-full p-6 shadow-card fade-in">
+      <div class="flex items-start justify-between gap-4">
+        <h3 class="font-display font-bold text-lg grad-text">Methodology &amp; Design</h3>
+        <button data-close-about class="focus-ring text-slate-400 hover:text-white text-xl leading-none">✕</button>
+      </div>
+      <div class="mt-3 space-y-2.5 text-[13px] text-slate-300 leading-relaxed">
+        <p>This roadmap is built around the four official IELTS assessment criteria — <b class="text-slate-100">Task Achievement/Response, Coherence &amp; Cohesion, Lexical Resource</b> and <b class="text-slate-100">Grammatical Range &amp; Accuracy</b> (plus Pronunciation for Speaking) — using Cambridge's public band descriptor language for Bands 6-9 as the target bar for Band 7.5+.</p>
+        <p>Grammar is drawn from a 24-point B2→C1 bank (inversion, cleft sentences, mixed conditionals, participle clauses, the subjunctive, and more) cycled in <b class="text-slate-100">three spaced passes</b>: recognition (Months 1-2), production in writing/speech (Months 3-4), and fluent timed mastery (Months 5-6) — reflecting spaced-repetition research on durable retention.</p>
+        <p>Every day interleaves all four macro-skills (one deep-dive plus three lighter maintenance touches) rather than isolating a single skill, consistent with research on skill interleaving. Daily load is calibrated to roughly <b class="text-slate-100">1.5-2 hours</b>.</p>
+        <p>Format details (4-part/40-question Listening, 3-passage/40-question Reading, Task 1 150 words/20 min, Task 2 250 words/40 min, 3-part Speaking) follow the official IELTS test structure.</p>
+      </div>
+      <button data-close-about class="focus-ring mt-5 w-full text-sm px-4 py-2.5 rounded-xl btn-primary font-semibold">Got it</button>
+    </div>
+  </div>
+
+  <!-- ================= POMODORO TIMER MODAL ================= -->
+  <div id="timerModal" class="hidden fixed inset-0 z-50 modal-backdrop grid place-items-center p-4">
+    <div class="glass-strong rounded-2xl max-w-sm w-full p-6 shadow-card fade-in relative overflow-hidden">
+      <div class="absolute -top-16 -right-16 w-40 h-40 rounded-full bg-brand-emerald/10 blur-3xl animate-pulseGlow"></div>
+      <div class="flex items-center justify-between relative">
+        <h3 class="font-display font-bold text-lg">Study Timer</h3>
+        <button data-close-timer class="focus-ring text-slate-400 hover:text-white text-xl leading-none">✕</button>
+      </div>
+
+      <div class="mt-3 flex gap-2 relative">
+        <button data-mode="focus" class="timer-mode-btn flex-1 text-xs font-semibold py-2 rounded-lg glass card-hover">Focus 25</button>
+        <button data-mode="short" class="timer-mode-btn flex-1 text-xs font-semibold py-2 rounded-lg glass card-hover">Break 5</button>
+        <button data-mode="long" class="timer-mode-btn flex-1 text-xs font-semibold py-2 rounded-lg glass card-hover">Break 15</button>
+      </div>
+
+      <div class="mt-6 grid place-items-center relative">
+        <svg width="200" height="200" viewBox="0 0 200 200" class="-rotate-90">
+          <circle cx="100" cy="100" r="88" fill="none" stroke-width="10" class="ring-track"></circle>
+          <circle id="timerRing" cx="100" cy="100" r="88" fill="none" stroke-width="10" stroke-linecap="round"
+            stroke="url(#timerGrad)" stroke-dasharray="553" stroke-dashoffset="0" style="transition: stroke-dashoffset 1s linear;"></circle>
+          <defs>
+            <linearGradient id="timerGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#34d399"/>
+              <stop offset="60%" stop-color="#38bdf8"/>
+              <stop offset="100%" stop-color="#818cf8"/>
+            </linearGradient>
+          </defs>
+        </svg>
+        <div class="absolute flex flex-col items-center">
+          <span id="timerDisplay" class="font-display text-4xl font-extrabold num-pill tracking-tight">25:00</span>
+          <span id="timerLabel" class="text-[11px] uppercase tracking-widest text-slate-400 mt-1">Focus session</span>
+        </div>
+      </div>
+
+      <div class="mt-6 flex items-center justify-center gap-3 relative">
+        <button id="btnTimerReset" class="focus-ring w-11 h-11 rounded-full glass grid place-items-center card-hover text-slate-300 hover:text-white">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"></path><path d="M3 3v5h5"></path></svg>
+        </button>
+        <button id="btnTimerToggle" class="focus-ring w-16 h-16 rounded-full btn-primary grid place-items-center shadow-glowEmerald card-hover">
+          <svg id="iconPlay" xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"></path></svg>
+          <svg id="iconPause" xmlns="http://www.w3.org/2000/svg" class="w-6 h-6 hidden" viewBox="0 0 24 24" fill="currentColor"><path d="M6 5h4v14H6zM14 5h4v14h-4z"></path></svg>
+        </button>
+        <button id="btnTimerSkip" class="focus-ring w-11 h-11 rounded-full glass grid place-items-center card-hover text-slate-300 hover:text-white">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 4 12 8-12 8V4z"></path><path d="M19 5v14"></path></svg>
+        </button>
+      </div>
+      <p class="mt-4 text-center text-[11px] text-slate-500 relative">Runs while this tab is open · sound plays on completion</p>
+    </div>
+  </div>
+
+  <footer class="max-w-[1400px] mx-auto px-4 sm:px-6 py-10 text-center">
+    <div class="divider-fade mb-6"></div>
+    <p class="text-[11.5px] text-slate-500 leading-relaxed max-w-xl mx-auto">
+      Built for a 6-month B2 → C1 IELTS journey · Progress is saved locally in this browser · No account or upload required
+    </p>
+  </footer>
+
+<script src="roadmap-data.js"></script>
+<script src="app.js"></script>
+</body>
