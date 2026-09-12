@@ -279,7 +279,15 @@ months_summary = []
 for m in range(1, 7):
     wks = MONTH_WEEKS[m]
     d = [x for x in DAYS if x["m"] == m]
-    months_summary.append({"month": m, "phase": PHASE_NAMES[m], "weeks": wks, "dayCount": len(d)})
+    day_numbers = [x["n"] for x in d]
+    # dayRange lets the client know exactly which day numbers belong to a
+    # month's still-unloaded chunk (for code-splitting/lazy loading — see
+    # BUILD.md) without needing that chunk's data downloaded yet: progress
+    # totals and "is this day in a loaded month" checks can use it directly.
+    months_summary.append({
+        "month": m, "phase": PHASE_NAMES[m], "weeks": wks, "dayCount": len(d),
+        "dayRange": [min(day_numbers), max(day_numbers)] if day_numbers else [0, 0],
+    })
 
 out = {"days": DAYS, "months": months_summary, "topics": TOPICS, "phaseNames": PHASE_NAMES,
        "grammarBankSize": len(GRAMMAR_BANK), "totalDays": day_number}

@@ -8,7 +8,7 @@
      cdn.tailwindcss.com — the theme extension that used to live in an inline
      <script>tailwind.config = {...}</script> block here now lives in
      tailwind.config.js, which the build step reads directly. See BUILD.md. -->
-<link rel="stylesheet" href="styles.css">
+__STYLE_TAG__
 <body class="font-sans antialiased">
 
   <!-- ================= HEADER ================= -->
@@ -299,6 +299,6 @@
     </p>
   </footer>
 
-<script src="roadmap-data.js"></script>
-<script src="app.js"></script>
+__DATA_TAG__
+__SCRIPT_TAG__
 </body>
