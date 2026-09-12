@@ -907,6 +907,7 @@
   var speakingIntervalId = null; // the Speaking exercise's prep/record countdown
   var speakingCancelled = false; // guards Speaking's async callbacks after the modal closes
   var aiConfigSavedHandler = null; // active 'ai-config-saved' listener while the Speaking review screen is open
+  var ttsToken = 0; // bumped on every stop/replay so an in-flight speakSegments chain can detect it's stale
 
   function grace(ms) { graceUntil = Date.now() + (ms || 900); }
   function inGrace() { return Date.now() < graceUntil; }
@@ -931,6 +932,7 @@
 
   function stopAllMedia() {
     speakingCancelled = true;
+    ttsToken++; // invalidate any in-flight speakSegments chain (see note below on why this is needed)
     clearActiveInterval();
     clearSpeakingInterval();
     mediaStreams.forEach(function (s) { try { s.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {} });
@@ -1138,8 +1140,20 @@
   function speakSegments(segments, hint, onDone) {
     if (!('speechSynthesis' in window)) { onDone && onDone(); return; }
     window.speechSynthesis.cancel();
+    // Note: calling cancel() above interrupts whatever utterance is currently
+    // speaking, which fires that utterance's onerror (not onend) in most
+    // browsers. Since onerror is also wired to next(), a naive chain would
+    // treat "interrupted" the same as "finished" and immediately speak the
+    // NEXT segment — so closing the exercise mid-playback used to just skip
+    // ahead instead of stopping, and the recording would keep talking after
+    // the modal was gone. myToken/ttsToken fixes this: every call here (and
+    // every stopAllMedia()) bumps the shared counter, so a chain started
+    // before the bump can recognise it's stale and stop instead of queuing
+    // the next segment.
+    var myToken = ++ttsToken;
     var i = 0;
     function next() {
+      if (myToken !== ttsToken) return; // superseded by a stop/replay — do not speak any more
       if (i >= segments.length) { onDone && onDone(); return; }
       var seg = segments[i++];
       var u = new SpeechSynthesisUtterance(seg.text);
