@@ -1,0 +1,142 @@
+// Block 1 of the backend migration: auth + progress/history data model.
+// Covers backlog item "1. Аутентификация и База данных" in full, and lays
+// the tables that items 2 (exercise history/analytics) and 5 (reminders)
+// will read/write in later blocks.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")   // pooled connection (PgBouncer/Prisma Accelerate) — used at runtime
+  directUrl = env("DIRECT_URL")     // direct connection — used only by `prisma migrate` / `prisma studio`
+}
+
+enum Skill {
+  LISTENING
+  READING
+  WRITING
+  SPEAKING
+}
+
+enum ReminderChannel {
+  NONE
+  EMAIL
+  PUSH
+}
+
+enum Theme {
+  DARK
+  LIGHT
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // UX/UX-adjacent preferences that belong to the account, not the browser
+  // (so they follow the user across devices, unlike the current localStorage setup).
+  theme           Theme           @default(DARK)
+  reminderChannel ReminderChannel @default(NONE)
+  reminderHourUtc Int? // 0-23; hour to check "did they miss today" and notify
+  timezone        String? // IANA name, e.g. "Asia/Tashkent" — for local-day boundaries
+
+  refreshTokens     RefreshToken[]
+  dayProgress       DayProgress[]
+  exerciseAttempts  ExerciseAttempt[]
+  pomodoroLogs      PomodoroLog[]
+  pushSubscriptions PushSubscription[]
+
+  @@map("users")
+}
+
+// Opaque, rotated refresh tokens. Only a SHA-256 hash of the token is ever
+// stored — a leaked database row alone can never be replayed. Rotation +
+// reuse detection lives in app/api/auth/refresh/route.ts.
+model RefreshToken {
+  id        String    @id @default(cuid())
+  tokenHash String    @unique
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime  @default(now())
+  expiresAt DateTime
+  revokedAt DateTime?
+  userAgent String?
+  ip        String?
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+// Replaces the current localStorage "completed days" set. One row per
+// user per day (1-180); this is what makes progress cross-device.
+model DayProgress {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  dayNumber   Int
+  completed   Boolean   @default(false)
+  completedAt DateTime?
+  hoursLogged Float     @default(0)
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([userId, dayNumber])
+  @@index([userId])
+  @@map("day_progress")
+}
+
+// Every submitted attempt at a graded exercise — not just "day done", but
+// the actual score/answers, so a future dashboard can chart progress over
+// time per skill. This is the "история и аналитика" table from backlog item 1.
+model ExerciseAttempt {
+  id           String    @id @default(cuid())
+  userId       String
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  dayNumber    Int
+  skill        Skill
+  startedAt    DateTime  @default(now())
+  submittedAt  DateTime?
+  scorePercent Float? // Listening/Reading: % of auto-graded questions correct
+  bandEstimate Float? // Writing/Speaking: self- or AI-estimated IELTS band (1-9, .5 steps)
+  answers      Json? // per-question responses + correctness; shape is exercise-defined
+  aiFeedback   String? @db.Text // raw text from the third-party Speaking grader, if used
+  createdAt    DateTime @default(now())
+
+  @@index([userId, dayNumber])
+  @@map("exercise_attempts")
+}
+
+// Server-side mirror of the existing Pomodoro localStorage log, so the
+// backup/restore feature (BACKUP_SCHEMA.md) has a real per-account home.
+model PomodoroLog {
+  id       String   @id @default(cuid())
+  userId   String
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  date     DateTime @db.Date
+  minutes  Int
+  sessions Int
+
+  @@unique([userId, date])
+  @@map("pomodoro_logs")
+}
+
+// Web Push subscriptions, for backlog item 5 ("напоминания ... через
+// PWA"). Created once the PWA/reminders block registers a service worker
+// and the user opts in; unused by block 1 but modeled now so the schema
+// doesn't need another migration when that block lands.
+model PushSubscription {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  createdAt DateTime @default(now())
+
+  @@map("push_subscriptions")
+}
