@@ -1,8 +1,0 @@
-/* Tailwind build-pipeline entry point. Compiled ahead of time by the CLI
-   (see BUILD.md / package.json "build:css") instead of shipping the whole
-   Tailwind engine to the browser via cdn.tailwindcss.com. The hand-written
-   custom CSS in styles.css (glass panels, accordion transitions, toasts,
-   etc.) is appended after this compiles — see build.py's compile_tailwind(). */
-@tailwind base;
-@tailwind components;
-@tailwind utilities;

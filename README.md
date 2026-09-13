@@ -1,92 +1,56 @@
-# IELTS 6-Month Roadmap
+# IELTS Roadmap — Next.js migration
 
-A day-by-day B2 → C1 IELTS preparation plan: 180 daily sessions across 26 weeks / 6 phased months, each with a grammar component, all four skill workouts (Listening/Reading/Writing/Speaking), three vocabulary collocations, and a concrete action item — plus progress tracking, search/filter, a built-in Pomodoro timer, proctored practice exercises (Month 1), a progress backup/restore tool, and a configurable third-party AI Speaking grader.
+The full conversion of the static site (`ielts-roadmap/`) into a real Next.js 14 (App Router) application, including a **full React rewrite of the ~2,175-line `app.js`** — not just a wrapper around it. This is the actual migration, not a plan for one — but it has **not been built/run** in the sandbox this was written in (see "Why this wasn't build-verified" below), so treat the first `npm install && npm run build` on your machine as the real first test.
 
-Multi-file static site: HTML + a compiled CSS bundle + a JS file + a small eager data file + 5 lazily-fetched per-month data chunks. No build tooling is required to *run* it (open `index.html` directly, or deploy the files as-is) — a build step (see below) is only needed after editing source files in `src/`.
+## What changed vs. the static site
 
-## Live
+- **Same visible app, real React underneath.** Every piece of `app.js` — data loading, progress tracking, search/filters, the accordion tree, backup/restore, the AI grader settings, the Pomodoro timer, and the full proctored exercise runner (fullscreen anti-cheat, Listening/Reading/Writing/Speaking) — is now a typed React component or hook instead of direct DOM manipulation. Visually and functionally this should be indistinguishable from the current Vercel deployment; see "Migration strategy" below for how fidelity was checked without being able to run a real build.
+- **Real backend, for real this time.** `app/api/auth/{register,login,logout,refresh,me}` plus `prisma/schema.prisma` (`User`, `RefreshToken`, `DayProgress`, `ExerciseAttempt`, `PomodoroLog`, `PushSubscription`) are wired in and buildable. Progress itself still reads/writes `localStorage` only (see "Explicitly not in this drop").
+- **A working account UI.** `components/AuthBar.tsx` — a floating pill (top-right) that shows "Войти" when signed out, opens a login/register modal, and shows the signed-in user + a "Выйти" button otherwise.
+- **Tailwind compiles through Next's own pipeline**, not the old standalone `build.py` + Tailwind-CLI step.
+- **A few incidental accessibility fixes** that fell out of the rewrite rather than being separately implemented: every modal (`components/Modal.tsx`) now has `role="dialog"`, `aria-modal="true"`, and closes on Escape — none of that existed in the original `class="hidden"`-toggled `<div>`s.
 
-Deployed on Vercel from this repo's `main` branch. The static site serves `index.html`, `styles.css`, `app.js`, `roadmap-data.js`, and `data/month-2.json` .. `data/month-6.json` as-is.
+## Migration strategy: from "lift the markup" to a real rewrite
 
-## Structure
+An earlier drop of this Next.js app took the "strangler fig" approach: `app.js` and the body markup were lifted into the app unchanged (via `dangerouslySetInnerHTML` + `<script src="/app.js">`), on the reasoning that a full hand-rewrite of tested, working code — with no way to run or test it in the sandbox that wrote it — was pure typo risk for zero visible change.
 
-```
-index.html            the deployable page shell (generated — do not hand-edit)
-styles.css             compiled Tailwind utilities + hand-written custom CSS, minified (generated — do not hand-edit)
-app.js                 all client-side logic: rendering, filters, progress, timer, exercises, backup, AI grader (generated — do not hand-edit)
-roadmap-data.js        eager payload: window.ROADMAP_META (all 6 months' stats) + window.ROADMAP_MONTH1_DAYS (generated — do not hand-edit)
-data/month-2.json .. month-6.json   lazily-fetched per-month day data, one file per month (generated — do not hand-edit)
-src/
-  content_banks.py    grammar bank (24 points, plain-English rule/tip explanations), topic list, vocabulary/collocation bank
-  task_banks.py       per-skill, per-month-phase task templates
-  exercises_*.py      gradable Listening/Reading/Writing/Speaking exercise content banks (Month 1 topics)
-  generate.py         builds src/roadmap_data.json from the content banks + exercise banks
-  roadmap_data.json   generated day-by-day dataset (180 days), canonical source for both build modes
-  template.html       page shell / markup, with placeholders for CSS/data/script
-  styles.css           hand-written custom CSS (glass panels, accordions, toasts, keyframes) — appended after compiled Tailwind, not processed by it
-  tailwind.config.js   Tailwind theme extension (colors, fonts, shadows, keyframes) + content-scan paths
-  tailwind.input.css   bare @tailwind directives — the CLI's compile entry point
-  package.json         `npm install` + `npm run build:css` for the Tailwind CLI (see Build pipeline below)
-  app.js                source app logic, copied verbatim to ../app.js by build.py
-  build.py             builds either the multi-file site or a single-file artifact (see below); also compiles CSS and splits data into month chunks
-  BACKUP_SCHEMA.md     JSON schema for the export/import backup file + a future authenticated-backend REST/DB design
-  test_render.py       Playwright smoke test (180 days render, search/filter/timer/persistence)
-  test_exercise.py     Playwright test for the proctored exercise runner (all 4 skills, anti-cheat)
-  test_fullscreen_fix.py   Playwright test proving the fullscreen-hang bug is fixed (simulates a permanently-pending requestFullscreen() promise)
-  test_lazy_months.py  Playwright test for month code-splitting (needs a local HTTP server — file:// doesn't support fetch())
-  test_backup_and_ai.py Playwright test for export/import and the AI grader modal (presets, validation, test-connection)
+This drop does the full rewrite anyway, because that's what was explicitly asked for. To keep the risk that reasoning was worried about as low as possible, the port was done as a close **translation**, not a redesign:
+
+- Every function in `app.js` (the original is kept at `ielts-roadmap/src/app.js` for reference) maps to a specific hook or component — `weekProgress()`/`monthProgress()`/`overallProgress()` → `lib/helpers.ts`, `buildDayDetailHTML()` → `components/DayDetail.tsx`, `renderSpeaking()` → `components/exercise/ExerciseSpeaking.tsx`, and so on — rather than being reorganised around a different architecture.
+- All state (`completed`, search/filters, accordion open/closed, the Pomodoro timer, backup/restore, AI grader config, the exercise runner's fullscreen state machine) was moved into `context/RoadmapContext.tsx` as the direct equivalent of `app.js`'s module-level `var`s, so the shape of "what depends on what" didn't change, only how it's stored.
+- A few places genuinely are better served by React's model than a literal translation, and were done that way instead of forced into an unnatural shape: the exercise runner's per-attempt cleanup (stopping `MediaRecorder`/`SpeechRecognition`/timers) now happens via `useEffect` unmount cleanup instead of a manually-tracked `stopAllMedia()` — React guarantees that cleanup runs; the old code had to remember to call it. The day-by-day "only build this DOM once you open it" trick (`renderedDetail`) is now just "only mount `<DayDetail>` once you've opened it once" (`components/DayRow.tsx`), which is the idiomatic React version of the same optimization.
+- Data loading keeps the exact same contract: Month 1 + the tiny cross-month `meta.json` are read server-side in `app/page.tsx` and passed down as props (replacing the old `window.ROADMAP_META`/`window.ROADMAP_MONTH1_DAYS` globals set by a `<script>` tag), and Months 2-6 are still fetched lazily from `public/data/month-N.json` after first paint, unchanged.
+
+## Tailwind: now compiled by Next's own pipeline
+
+The static-site build had its own standalone step (`build.py` calling the Tailwind CLI directly, config in `src/tailwind.config.js`) because there was no bundler to hook into. Next.js has PostCSS built in, so `tailwind.config.js` + `postcss.config.js` + `@tailwind` directives in `app/globals.css` replace that step — same theme extension (colors, fonts, keyframes), copied over unchanged. Some class names are still assembled from full literal strings inside `.tsx` files (e.g. the per-skill color maps in `components/FilterChips.tsx`, or the workout-card ring colors in `components/WorkoutCard.tsx`) rather than written as static JSX — Tailwind's scanner reads `.tsx` files as plain text and picks up any full class-name substring wherever it appears, the same mechanism the old `app.js`/`build.py` pair relied on.
+
+## Setup
+
+```bash
+npm install
+cp .env.example .env.local   # fill in DATABASE_URL, DIRECT_URL, JWT_ACCESS_SECRET — see that file's comments
+npx prisma migrate dev --name init
+npm run dev                  # http://localhost:3000
 ```
 
-To rebuild after editing anything in `src/`:
+Deploying to Vercel: same repo, but point the Vercel project's root directory at wherever you place this (see "Where this lives" below), add the three env vars in Project Settings, and set the build command to `prisma generate && next build` (already the default `npm run build` in `package.json`).
 
-```
-cd src
-python3 generate.py       # regenerates roadmap_data.json from the content banks
-python3 build.py site     # compiles CSS, splits data by month, writes ../index.html, ../styles.css, ../app.js, ../roadmap-data.js, ../data/month-*.json
-```
+## Where this lives relative to the existing repo
 
-## Build pipeline (Tailwind CLI, no more CDN)
+This was built as a **separate folder** (`ielts-nextjs/`, alongside the existing static-site repo), not a replacement of it in place. That's deliberate: the static site is your live, working `prp-to-ex.vercel.app` deployment, and this hasn't been build-tested yet (see below) — swapping it in blind would risk breaking production over something as small as a typo this environment couldn't catch. Recommended path:
 
-Styling used to load `<script src="https://cdn.tailwindcss.com">` at runtime, which ships the entire Tailwind JIT engine to every visitor and compiles styles in-browser on every page load. `build.py` now compiles a static, purged, minified stylesheet ahead of time instead:
+1. Run `npm install && npm run dev` here, click through it — search/filters, expand/collapse, checking days off, the Pomodoro timer, Backup/Restore export+import, the AI Grader settings (including "Test Connection" against a real endpoint if you have one), and at least one full Day-1 exercise per skill (Listening/Reading/Writing/Speaking) including the "leave fullscreen mid-exercise" cheat-detection path — and confirm it matches the live site.
+2. Once you're happy, either point a new Vercel project at this folder (cheapest way to test a real deploy without touching the live one), or replace the static-site repo's contents with this folder's contents and push — your call once you've seen it run.
 
-```
-cd src
-npm install              # installs tailwindcss (see package.json) — one-time, or after upgrading it
-python3 build.py site    # runs `tailwindcss -i tailwind.input.css -o ... -c tailwind.config.js --minify` internally,
-                          # scanning template.html + app.js for every utility class actually used, then appends
-                          # the hand-written custom CSS (styles.css) unprocessed after it
-```
+## Why this wasn't build-verified
 
-If `npm install` can't reach the registry in your environment, `build.py` also checks `PATH` and one documented fallback location for an already-installed `tailwindcss` binary (see `_FALLBACK_TAILWIND_BINS` in `build.py`) — but a real deploy/CI environment should just run `npm install` and let it use `src/node_modules/.bin/tailwindcss`.
+`npm install` needs `registry.npmjs.org`, and that host returns `403 Forbidden` from every place this session can run shell commands — confirmed with a plain `curl`, not just `npm`'s own error. There was no working path to the npm registry anywhere available, so nothing here could actually be `npm install`ed or `next build`t before delivery.
 
-`npm run watch:css` (from `src/`) recompiles on save while iterating on styles.
+What that means practically: the `.ts`/`.tsx` files were checked with the TypeScript compiler against a small hand-written set of stand-in type declarations for `react`/`next` (since the real `@types/react` package is also blocked by the same registry restriction) — enough to catch real mistakes (and it did: an import bug in `BackupModal.tsx` was caught and fixed this way), but **not** a substitute for a real build against the actual React/Next type definitions. Every piece of exercise-runner logic (the fullscreen timeout race, the anti-cheat listeners, the Speaking recorder's `MediaRecorder`/`SpeechRecognition` handling) was traced by hand against the original `app.js` rather than exercised in a browser. The *first* real build/run of this whole thing will be `npm install && npm run dev` on your machine. If anything errors or behaves differently from the live site, paste it back and it gets fixed immediately — a rewrite this size having zero issues on the very first real run would be unusual, and the exercise runner (the most stateful, timing-sensitive part) is the most likely place for something to need a second pass.
 
-## Data chunking (code-splitting by month)
+## Explicitly not in this drop
 
-`roadmap_data.json` (~690KB, all 180 days) is the canonical source, but the site build splits it before shipping:
-
-- `roadmap-data.js` ships **eagerly** with the page: `window.ROADMAP_META` (every month's phase name, week list, day count and day-number range — a few KB) and `window.ROADMAP_MONTH1_DAYS` (Month 1's full content, since that's what every new visitor lands on).
-- `data/month-2.json` .. `data/month-6.json` ship **lazily**: `app.js` fetches them in the background right after the first render (via `requestIdleCallback`, falling back to `setTimeout`), and splices each one in as it arrives, replacing that month's skeleton-loading placeholder.
-- Progress totals/percentages (overall, per-month, per-week) are computed from the always-eager `ROADMAP_META` day-number ranges, **not** from however much day content has loaded so far — so they're correct immediately, with no "0% flash" while a month is still loading.
-- The single-file **artifact** build (below) has nowhere to fetch a chunk *from* — it's one self-contained HTML file — so it keeps embedding all 180 days inline, exactly as before. Code-splitting is a multi-file-site-only optimization by nature.
-
-## Build modes
-
-`src/build.py` has two modes:
-
-- **`python3 build.py site`** (default) — the real multi-file website used above: `index.html` references `styles.css`, `roadmap-data.js`, `app.js`, and `data/month-*.json` as separate files. This is what's committed to the repo and deployed to Vercel.
-- **`python3 build.py artifact [output_path]`** — a single self-contained HTML file with the CSS, data, and JS all inlined (no lazy loading — see Data chunking above). Needed only because Claude's Artifact publisher requires one self-contained file; this output is never committed to the repo (default path is one directory above the repo root).
-
-Both modes are generated from the same source files (`src/template.html`, `src/styles.css` + Tailwind config, `src/app.js`, `src/roadmap_data.json`), so editing logic or styling only ever happens once, in `src/`.
-
-## Progress sync, backup & restore
-
-The single-file artifact build also works as a Claude Artifact: when opened through a published `claude.ai/code/artifact/...` link with the `db` capability declared, it syncs progress live across devices via `claude.use('db')`. The multi-file site (this repo's `index.html`, e.g. on Vercel) or any other standalone copy has no `window.claude`, so progress falls back to that browser's `localStorage` only — a small status pill in the header always shows which mode is active.
-
-Since `localStorage` can be cleared or is device-specific, the toolbar's **Backup / Restore** button exports all local state (completed days, Pomodoro history, AI grader endpoint/model — never the API key) as a versioned, validated JSON file, and can restore from one. See `src/BACKUP_SCHEMA.md` for the full file schema and a matching REST/DB design for a future authenticated backend.
-
-## Proctored practice exercises
-
-Month 1 (Weeks 1-5, days 1-35) has real, gradable Listening/Reading/Writing/Speaking exercises that run full-screen with anti-cheat detection (leaving full-screen, switching tabs, or switching windows resets the attempt). If the browser's fullscreen request neither resolves nor rejects within 3 seconds (a real bug reproduced on the live deployment), the app degrades to a non-fullscreen "standard mode" attempt with a toast explaining why, rather than leaving the user stuck — see `requestFSWithTimeout()` in `app.js` and `test_fullscreen_fix.py`. Months 2-6 (days 36-180) show an accessible "Coming soon" placeholder instead of a Start button where exercise content hasn't been authored yet.
-
-Speaking exercises can optionally be reviewed by a third-party AI service the user configures themselves (endpoint, API key, model) — never by this app or by Claude. The AI Grader settings modal has quick presets for OpenAI/Groq/Ollama, inline validation, and a "Test Connection" button; the API key is stored in `localStorage` or `sessionStorage` depending on a "remember on this device" toggle, and is never included in an exported backup file.
+- `/api/progress`, `/api/exercise-attempts` — reading/writing `DayProgress`/`ExerciseAttempt` from the frontend (still using `localStorage` for now).
+- Days 36-180 real exercise content (the "Coming soon" placeholders are preserved exactly as before).
+- PWA/offline, light theme, a dedicated mobile audit, PDF export, email/push reminders, a TTS provider swap (ElevenLabs/Google Cloud TTS/Amazon Polly instead of the browser's built-in `speechSynthesis`), and CI/CD (GitHub Actions running Playwright before Vercel deploy) — all still queued from the original backlog, unstarted.
